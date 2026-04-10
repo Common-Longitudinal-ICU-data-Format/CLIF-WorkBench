@@ -1,0 +1,22 @@
+# clif-workbench:ai — Container shell configuration
+
+# --- Prompt ---
+export PS1='\[\033[1;35m\][clif-ai]\[\033[0m\] \[\033[1;33m\]\w\[\033[0m\] \$ '
+
+# --- Aliases ---
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias py='python'
+alias gpus='nvidia-smi'
+
+# --- Python ---
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONUNBUFFERED=1
+
+# --- CUDA ---
+export NVIDIA_VISIBLE_DEVICES=all
+export NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# --- uv shell completion ---
+eval "$(uv generate-shell-completion bash 2>/dev/null)"
