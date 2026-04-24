@@ -1,157 +1,121 @@
 # CLIF-WorkBench
 
-Standardized Docker base images for the [CLIF](https://github.com/Common-Longitudinal-ICU-data-Format) (Common Longitudinal ICU data Format) ecosystem. Pre-built environments so CLIF project sites can pull, mount data + code, and run — no local Python setup required.
+Apptainer containers for the [CLIF](https://github.com/Common-Longitudinal-ICU-data-Format) (Common Longitudinal ICU data Format) ecosystem. Pre-built environments so CLIF project sites can install one `.sif` file, mount data + code, and run — no local Python setup required.
 
 ## Images
 
-| Image | Base | Size | Use for |
-|-------|------|------|---------|
-| `clif-workbench:ml` | `python:3.12-slim-bookworm` | ~700-900 MB | ETL, clinical analysis, classical ML (most CLIF projects) |
-| `clif-workbench:ai` | `nvidia/cuda:12.8.0-devel-ubuntu22.04` | ~8-10 GB | Deep learning with GPU (CLIFATRON, CLIF-RL) |
+| Image | Base | `.sif` size | Use for |
+|-------|------|-------------|---------|
+| `clif-workbench:ml` | `python:3.12-slim-bookworm` | ~1 GB | ETL, clinical analysis, classical ML (most CLIF projects) |
+| `clif-workbench:ai` | `nvidia/cuda:12.8.0-devel-ubuntu22.04` | ~10 GB | Deep learning with GPU (CLIFATRON, CLIF-RL) |
 
 Both images include: **Python 3.12**, **uv** (fast package manager), **clifpy**, pandas, polars, duckdb, scikit-learn, statsmodels, matplotlib, streamlit, and more.
 
 The **AI image** additionally includes: PyTorch (CUDA 12.8), transformers, deepspeed, accelerate, xgboost, optuna, trl, wandb, shap.
 
-## Quick Start
+## Install — pick your path
 
-### Pull an image
+### Path 1 — Online pull (recommended when your machine has internet)
 
 ```bash
-docker pull clifconsortium/clif-workbench:ml
-docker pull clifconsortium/clif-workbench:ai
+apptainer pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
+apptainer pull clif-ai.sif docker://clifconsortium/clif-workbench:ai
 ```
 
-### Run a project
+> `docker://` is just the URL scheme Apptainer uses to fetch from a container registry — you do not need Docker installed.
+
+For reproducibility, pin to a version:
+
+```bash
+apptainer pull clif-ml-0.1.0.sif docker://clifconsortium/clif-workbench:0.1.0-ml
+```
+
+### Path 2 — Download `.sif` from GitHub Releases (no registry access)
+
+The ML image is published as a `.sif` asset on each tagged release. Download from a web-connected machine, transfer to your cluster, verify checksum:
+
+```bash
+wget https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-WorkBench/releases/download/v0.1.0/clif-ml-0.1.0.sif
+wget https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-WorkBench/releases/download/v0.1.0/clif-ml-0.1.0.sif.sha256
+sha256sum -c clif-ml-0.1.0.sif.sha256
+```
+
+> The AI image exceeds GitHub's 2 GB per-file cap, so it's not on Releases — use Path 1 or Path 3.
+
+### Path 3 — Copy a `.sif` from a colleague (fully offline)
+
+A `.sif` file is self-contained. If anyone at your site (or a collaborating site) already has the image, just copy the file:
+
+```bash
+# On the source machine
+sha256sum clif-ai.sif > clif-ai.sif.sha256
+scp clif-ai.sif clif-ai.sif.sha256 user@your-cluster:~/
+
+# On your cluster
+sha256sum -c clif-ai.sif.sha256
+```
+
+Always verify the checksum after transfer.
+
+## Run a project
 
 Mount your CLIF data to `/data` and project code to `/project`, then execute:
 
 ```bash
-# Run a project's pipeline script
-docker run --rm \
-  -v /path/to/clif_data:/data \
-  -v /path/to/CLIF-C2D2:/project \
-  clifconsortium/clif-workbench:ml \
-  bash /project/run.sh
-
-# Or run a single Python file
-docker run --rm \
-  -v /path/to/clif_data:/data \
-  -v /path/to/my-project:/project \
-  clifconsortium/clif-workbench:ml \
-  python /project/analysis.py
-```
-
-### GPU workloads
-
-```bash
-docker run --rm --gpus all \
-  -v /path/to/clif_data:/data \
-  -v /path/to/CLIFATRON:/project \
-  clifconsortium/clif-workbench:ai \
-  bash /project/run.sh
-```
-
-### Interactive shell
-
-```bash
-docker run -it --rm \
-  -v /path/to/clif_data:/data \
-  clifconsortium/clif-workbench:ml \
-  bash
-```
-
-## Singularity / Apptainer
-
-For sites where Docker is not available (e.g., HPC clusters), pull the Docker Hub images directly as Singularity `.sif` files:
-
-```bash
-singularity pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
-singularity pull clif-ai.sif docker://clifconsortium/clif-workbench:ai
-```
-
-```bash
-# CPU workload
-singularity exec \
+# CPU workload (ML image)
+apptainer exec \
   --bind /path/to/clif_data:/data \
-  --bind /path/to/project:/project \
+  --bind /path/to/CLIF-C2D2:/project \
   clif-ml.sif \
   bash /project/run.sh
 
-# GPU workload
-singularity exec --nv \
+# GPU workload (AI image)
+apptainer exec --nv \
   --bind /path/to/clif_data:/data \
-  --bind /path/to/project:/project \
+  --bind /path/to/CLIFATRON:/project \
   clif-ai.sif \
   bash /project/run.sh
+
+# Single Python file
+apptainer exec \
+  --bind /path/to/clif_data:/data \
+  --bind /path/to/my-project:/project \
+  clif-ml.sif \
+  python /project/analysis.py
+
+# Interactive shell
+apptainer shell --bind /path/to/clif_data:/data clif-ml.sif
 ```
 
-> **Note:** Apptainer is the community fork of Singularity — commands are identical, just replace `singularity` with `apptainer`.
-
-> For SLURM job scripts, offline usage, troubleshooting, and site-specific HPC docs, see [docs/singularity-apptainer-guide.md](docs/singularity-apptainer-guide.md).
-
-## Extra Packages
+## Extra packages
 
 If your project needs a package not in the image, install it at runtime in your `run.sh`:
 
 ```bash
 #!/bin/bash
 # run.sh
-uv pip install --system firthlogist sas7bdat   # ~2-5 seconds with uv
+uv pip install --system firthlogist sas7bdat   # ~2–5 seconds with uv
 python /project/analysis.py
 python /project/report.py
 ```
 
-For faster repeat runs, mount a uv cache volume:
+The `.sif` is read-only, so you need a writable layer — pass `--writable-tmpfs` when running:
 
 ```bash
-docker run --rm \
-  -v /path/to/clif_data:/data \
-  -v /path/to/project:/project \
-  -v /path/to/uv_cache:/root/.cache/uv \
-  clifconsortium/clif-workbench:ml \
+apptainer exec --writable-tmpfs \
+  --bind /path/to/clif_data:/data \
+  --bind /path/to/project:/project \
+  clif-ml.sif \
   bash /project/run.sh
 ```
 
-## Build Locally
+For persistent installs across runs, or for air-gapped clusters with no pip access, see [docs/apptainer-guide.md](docs/apptainer-guide.md#installing-extra-packages).
 
-```bash
-# Build ML image
-./scripts/build.sh ml
+## HPC / SLURM
 
-# Build AI image
-./scripts/build.sh ai
+For SLURM job scripts, cache-directory tuning, environment footguns, institutional HPC docs, and troubleshooting, see:
 
-# Build both
-./scripts/build.sh all
-```
-
-## Publish to Docker Hub
-
-```bash
-# First time: log in to Docker Hub
-docker login
-
-# Push ML image
-./scripts/publish.sh ml
-
-# Push AI image
-./scripts/publish.sh ai
-
-# Push both with a version tag
-./scripts/publish.sh all 0.1.0
-
-# Use a different Docker Hub org
-DOCKERHUB_ORG=myorg ./scripts/publish.sh all
-```
-
-## Test Images
-
-```bash
-./scripts/test-images.sh ml
-./scripts/test-images.sh ai
-./scripts/test-images.sh all
-```
+➡️ **[docs/apptainer-guide.md](docs/apptainer-guide.md)**
 
 ## Tags
 
@@ -162,26 +126,27 @@ DOCKERHUB_ORG=myorg ./scripts/publish.sh all
 | `latest` | Alias for `ml` |
 | `X.Y.Z-ml`, `X.Y.Z-ai` | Version-pinned images |
 
-## Project Structure
+## Project structure
 
 ```
 CLIF-WorkBench/
 ├── docs/
-│   ├── docker-tags-and-versioning.md
-│   └── singularity-apptainer-guide.md
+│   ├── apptainer-guide.md          # HPC/SLURM/troubleshooting (user-facing)
+│   └── maintainers/                # Build + release docs (internal)
 ├── images/
-│   ├── ml/                    # ML image build context
-│   │   ├── Dockerfile
-│   │   ├── requirements.txt
-│   │   ├── container_bashrc
-│   │   └── .dockerignore
-│   └── ai/                    # AI image build context
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       ├── container_bashrc
-│       └── .dockerignore
+│   ├── ml/                         # ML image build context
+│   └── ai/                         # AI image build context
 ├── scripts/
-│   ├── build.sh               # Build images locally
-│   ├── publish.sh             # Push to Docker Hub
-│   └── test-images.sh         # Smoke tests
+│   ├── build.sh                    # Build images (maintainer)
+│   ├── build-sif.sh                # Convert image to .sif (maintainer)
+│   ├── publish.sh                  # Publish images to registry (maintainer)
+│   ├── publish-sif.sh              # Upload .sif to GitHub Releases (maintainer)
+│   └── test-images.sh              # Smoke tests (maintainer)
 ```
+
+## For maintainers
+
+The images are built with Docker, pushed to Docker Hub, and (for the ML image) also packaged as `.sif` assets on GitHub Releases. End users never need Docker.
+
+- [Building and publishing images](docs/maintainers/building-images.md)
+- [Tags & versioning](docs/maintainers/versioning.md)

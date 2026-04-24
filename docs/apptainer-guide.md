@@ -1,66 +1,66 @@
-# Singularity / Apptainer Guide
+# Apptainer Guide
 
-Apptainer (formerly Singularity) is the container runtime used on most university HPC clusters. Unlike Docker, it runs as your normal user — no root, no daemon. Images are single read-only `.sif` files that are easy to share, audit, and reproduce. This guide covers everything you need to run CLIF-WorkBench images on an HPC cluster.
-
-> Throughout this guide we use `singularity` in commands. If your cluster provides Apptainer, replace `singularity` with `apptainer` everywhere — the flags and behavior are identical.
+Apptainer is the container runtime used on most university HPC clusters. It runs as your normal user — no root, no daemon. Images are single read-only `.sif` files that are easy to share, audit, and reproduce. This guide covers everything you need to run CLIF-WorkBench images on an HPC cluster.
 
 ## Prerequisites
 
-**Container runtime.** Most clusters provide Apptainer or Singularity as a module or system-wide install:
+**Container runtime.** Most clusters provide Apptainer as a module or system-wide install:
 
 ```bash
-module load apptainer          # or: module load singularity
-singularity --version          # verify it's available
+module load apptainer          # some clusters have it system-wide; skip if so
+apptainer --version            # verify it's available
 ```
 
-**Internet access.** You need internet on the node where you pull images (usually the login node). Compute nodes typically do not have internet.
+**Internet access.** You only need internet on the machine where you install the image — usually a login node. Compute nodes typically do not have internet, which is fine: the `.sif` is a single file and runs offline once you have it. If you have no internet-facing machine at all, see [Offline / air-gapped install](#offline--air-gapped-install) below.
 
 **Disk space.** The `.sif` files need storage:
 
 | Image | `.sif` size | Cache needed during pull |
 |-------|-------------|------------------------|
-| `clif-workbench:ml` | ~1 GB | ~2-3 GB |
-| `clif-workbench:ai` | ~10 GB | ~20-25 GB |
+| `clif-workbench:ml` | ~1 GB | ~2–3 GB |
+| `clif-workbench:ai` | ~10 GB | ~20–25 GB |
 
 > If your home directory has a small quota, set the cache directory before pulling:
 > ```bash
-> export SINGULARITY_CACHEDIR=/scratch/$USER/.singularity/cache
-> export SINGULARITY_TMPDIR=/scratch/$USER/tmp
-> mkdir -p $SINGULARITY_CACHEDIR $SINGULARITY_TMPDIR
+> export APPTAINER_CACHEDIR=/scratch/$USER/.apptainer/cache
+> export APPTAINER_TMPDIR=/scratch/$USER/tmp
+> mkdir -p $APPTAINER_CACHEDIR $APPTAINER_TMPDIR
 > ```
 
 **For GPU workloads** (`:ai` image only):
-- NVIDIA drivers must be installed on compute nodes (this is your cluster admin's responsibility)
-- The container has CUDA 12.8, which requires host driver **>= 525**
-- Check your driver: run `nvidia-smi` on a compute node — the driver version is on the top line
+- NVIDIA drivers must be installed on compute nodes (your cluster admin's responsibility).
+- The container has CUDA 12.8, which requires host driver **>= 525**.
+- Check your driver: run `nvidia-smi` on a compute node — the driver version is on the top line.
 
-## Quick Start
+## Quick start
 
-### Pull images
+### Install an image
 
-Run this on the login node (it has internet):
+Run this on a machine with internet access (usually the login node):
 
 ```bash
-singularity pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
-singularity pull clif-ai.sif docker://clifconsortium/clif-workbench:ai
+apptainer pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
+apptainer pull clif-ai.sif docker://clifconsortium/clif-workbench:ai
 ```
 
-For reproducible pipelines, pull a version-pinned image (see [Docker Tags & Versioning](docker-tags-and-versioning.md)):
+> The `docker://` prefix is just the URL scheme Apptainer uses to fetch from a container registry — you do not need Docker installed.
+
+For reproducible pipelines, install a version-pinned image:
 
 ```bash
-singularity pull clif-ml-0.1.0.sif docker://clifconsortium/clif-workbench:0.1.0-ml
+apptainer pull clif-ml-0.1.0.sif docker://clifconsortium/clif-workbench:0.1.0-ml
 ```
 
 After a successful pull, clean the layer cache to reclaim space:
 
 ```bash
-singularity cache clean
+apptainer cache clean
 ```
 
 ### Run a CPU workload
 
 ```bash
-singularity exec \
+apptainer exec \
   --bind /path/to/clif_data:/data \
   --bind /path/to/my-project:/project \
   clif-ml.sif \
@@ -70,7 +70,7 @@ singularity exec \
 ### Run a GPU workload
 
 ```bash
-singularity exec --nv \
+apptainer exec --nv \
   --bind /path/to/clif_data:/data \
   --bind /path/to/CLIFATRON:/project \
   clif-ai.sif \
@@ -80,16 +80,63 @@ singularity exec --nv \
 ### Interactive shell
 
 ```bash
-singularity shell --bind /path/to/clif_data:/data clif-ml.sif
+apptainer shell --bind /path/to/clif_data:/data clif-ml.sif
 ```
 
 ### Run a single Python command
 
 ```bash
-singularity exec clif-ml.sif python -c "import clifpy; print(clifpy.__version__)"
+apptainer exec clif-ml.sif python -c "import clifpy; print(clifpy.__version__)"
 ```
 
-## SLURM Job Script Examples
+## Offline / air-gapped install
+
+If the machine you want to run on has no internet access at all, you have two paths:
+
+### Path 1 — Download the `.sif` from GitHub Releases
+
+The ML image is published as a `.sif` asset on each tagged release:
+
+```
+https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-WorkBench/releases
+```
+
+Download from any web-connected machine (your laptop works), transfer to the cluster, and verify:
+
+```bash
+# On a machine with web access
+wget https://github.com/.../releases/download/v0.1.0/clif-ml-0.1.0.sif
+wget https://github.com/.../releases/download/v0.1.0/clif-ml-0.1.0.sif.sha256
+
+# Transfer to the cluster (scp, rsync, USB, institutional share, ...)
+scp clif-ml-0.1.0.sif clif-ml-0.1.0.sif.sha256 user@cluster:~/
+
+# On the cluster, verify integrity
+sha256sum -c clif-ml-0.1.0.sif.sha256
+
+# Use it directly — no pull, no registry, no internet needed
+apptainer exec --bind /path/to/clif_data:/data clif-ml-0.1.0.sif bash /project/run.sh
+```
+
+> GitHub Releases caps assets at 2 GB per file, so the AI image is not published there. For the AI image, use Path 2.
+
+### Path 2 — Copy from a colleague
+
+A `.sif` file is self-contained and portable. If anyone at your site (or a collaborating site) already pulled the image on an internet-facing machine, you can copy the file directly:
+
+```bash
+# On the machine that has clif-ai.sif
+sha256sum clif-ai.sif > clif-ai.sif.sha256
+scp clif-ai.sif clif-ai.sif.sha256 user@target-cluster:~/
+
+# On the target cluster
+sha256sum -c clif-ai.sif.sha256
+apptainer exec --nv --bind /path/to/clif_data:/data clif-ai.sif bash /project/run.sh
+```
+
+Always verify `sha256sum` after transfer — large files occasionally corrupt over unreliable networks or USB media.
+
+## SLURM job script examples
 
 > Replace partition names, GPU syntax, and paths with what your cluster uses. Run `sinfo` to see available partitions.
 
@@ -108,7 +155,7 @@ set -euo pipefail
 
 module load apptainer             # some clusters have it system-wide; skip if so
 
-singularity exec \
+apptainer exec \
   --bind /path/to/clif_data:/data \
   --bind /path/to/my-project:/project \
   /path/to/clif-ml.sif \
@@ -132,10 +179,10 @@ set -euo pipefail
 module load apptainer
 
 # Verify GPU is visible before starting
-singularity exec --nv /path/to/clif-ai.sif \
+apptainer exec --nv /path/to/clif-ai.sif \
   python -c "import torch; assert torch.cuda.is_available(), 'No GPU found'"
 
-singularity exec --nv \
+apptainer exec --nv \
   --bind /path/to/clif_data:/data \
   --bind /path/to/CLIFATRON:/project \
   /path/to/clif-ai.sif \
@@ -158,7 +205,7 @@ set -euo pipefail
 
 module load apptainer
 
-singularity exec --nv \
+apptainer exec --nv \
   --bind /path/to/clif_data:/data \
   --bind /path/to/CLIFATRON:/project \
   /path/to/clif-ai.sif \
@@ -183,30 +230,18 @@ set -euo pipefail
 
 module load apptainer
 
-singularity exec \
+apptainer exec \
   --bind /path/to/clif_data:/data \
   --bind /path/to/my-project:/project \
   /path/to/clif-ml.sif \
   python /project/process_batch.py --batch-id "$SLURM_ARRAY_TASK_ID"
 ```
 
-## Key Differences from Docker
-
-| Concept | Docker | Singularity / Apptainer |
-|---------|--------|------------------------|
-| Mount a directory | `-v /host:/container` | `--bind /host:/container` |
-| Enable GPU | `--gpus all` | `--nv` |
-| Run a command | `docker run IMAGE CMD` | `singularity exec IMAGE CMD` |
-| Interactive shell | `docker run -it IMAGE bash` | `singularity shell IMAGE` |
-| Image format | Layered (stored in daemon) | Single `.sif` file |
-| Filesystem | Writable by default | Read-only by default |
-| Auto-mounted dirs | None (fully isolated) | `$HOME`, `$PWD`, `/tmp`, `/dev` |
-| Root required | Yes (daemon runs as root) | No |
-| Install extra packages | `pip install` in run.sh | Need `--writable-tmpfs` flag |
+## Environment footguns
 
 ### Watch out for auto-mounts
 
-Singularity mounts your home directory by default. If you have Python packages in `~/.local/lib/python3.12/site-packages/`, they can **shadow** packages inside the container. For example, a CPU-only `torch` in your home directory could override the GPU-enabled one in the `:ai` image.
+Apptainer mounts your home directory by default. If you have Python packages in `~/.local/lib/python3.12/site-packages/`, they can **shadow** packages inside the container. For example, a CPU-only `torch` in your home directory could override the GPU-enabled one in the `:ai` image.
 
 Fixes:
 
@@ -215,10 +250,10 @@ Fixes:
 export PYTHONNOUSERSITE=1
 
 # Option B: don't mount home at all
-singularity exec --no-home ...
+apptainer exec --no-home ...
 
 # Option C: full isolation (then explicitly --bind what you need)
-singularity exec --contain --bind /path/to/data:/data ...
+apptainer exec --contain --bind /path/to/data:/data ...
 ```
 
 ### Watch out for host environment leaking in
@@ -226,15 +261,15 @@ singularity exec --contain --bind /path/to/data:/data ...
 If you have conda environments or loaded modules, their `$PATH` and `$PYTHONPATH` can leak into the container. Use `--cleanenv` to start clean, but note that this also strips `$SLURM_*` variables:
 
 ```bash
-singularity exec --cleanenv \
+apptainer exec --cleanenv \
   --env SLURM_JOB_ID=$SLURM_JOB_ID \
   --bind /path/to/data:/data \
   clif-ml.sif bash /project/run.sh
 ```
 
-Or simply `module purge` before running Singularity.
+Or simply `module purge` before running Apptainer.
 
-## Installing Extra Packages
+## Installing extra packages
 
 The `.sif` image is read-only, so `uv pip install` in your `run.sh` needs a writable layer. Four options, from simplest to most permanent:
 
@@ -243,7 +278,7 @@ The `.sif` image is read-only, so `uv pip install` in your `run.sh` needs a writ
 Adds a temporary in-memory writable layer. Packages are lost when the container exits, but `uv` reinstalls them in seconds.
 
 ```bash
-singularity exec --writable-tmpfs \
+apptainer exec --writable-tmpfs \
   --bind /path/to/clif_data:/data \
   --bind /path/to/project:/project \
   clif-ml.sif \
@@ -268,7 +303,7 @@ dd if=/dev/zero of=clif-overlay.img bs=1M count=1024
 mkfs.ext3 -F clif-overlay.img
 
 # Run with the overlay
-singularity exec --overlay clif-overlay.img \
+apptainer exec --overlay clif-overlay.img \
   --bind /path/to/data:/data \
   clif-ml.sif \
   bash -c "uv pip install --system firthlogist && python /project/analysis.py"
@@ -285,7 +320,7 @@ For clusters with no internet at all — download wheels on a connected machine,
 pip download -d ./wheels firthlogist sas7bdat
 
 # Copy wheels/ to the cluster, then:
-singularity exec --writable-tmpfs \
+apptainer exec --writable-tmpfs \
   --bind ./wheels:/wheels \
   --bind /path/to/project:/project \
   clif-ml.sif \
@@ -310,17 +345,17 @@ From: clifconsortium/clif-workbench:ml
 ```
 
 ```bash
-singularity build clif-custom.sif clif-custom.def    # may need --fakeroot
+apptainer build clif-custom.sif clif-custom.def    # may need --fakeroot
 ```
 
 > Building requires `fakeroot` capability (most modern clusters have it) or root on another machine. Build elsewhere and copy the `.sif` to the cluster if needed.
 
-## CLIF Consortium HPC Resources
+## CLIF Consortium HPC resources
 
 Many CLIF sites run workloads on institutional HPC clusters. The table below links to each site's container documentation to help you get started.
 
-| Institution | HPC Cluster | Apptainer / Singularity Docs |
-|-------------|-------------|------------------------------|
+| Institution | HPC Cluster | Apptainer Docs |
+|-------------|-------------|----------------|
 | Cornell | CAC | [CAC Homepage](https://www.cac.cornell.edu/) |
 | Harvard | FASRC / Cannon | [Singularity on the Cluster](https://docs.rc.fas.harvard.edu/kb/singularity-on-the-cluster/) |
 | Johns Hopkins | ARCH / Rockfish | [Singularity Tutorial](https://docs.arch.jhu.edu/en/latest/3_Tutorials/containers/Tutorial_Singularity.html) |
@@ -334,18 +369,18 @@ Many CLIF sites run workloads on institutional HPC clusters. The table below lin
 | UCSF | Wynton | [Apptainer](https://wynton.ucsf.edu/hpc/software/apptainer.html) |
 | Yale | YCRC | [Containers](https://docs.ycrc.yale.edu/clusters-at-yale/guides/containers/) |
 
-> If your site is not listed or a link is outdated, please open an issue or PR on the [CLIF-WorkBench repository](https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-WorkBench).
+> Some sites still label their docs "Singularity" — that's the former name for Apptainer; the commands are identical. If your site is not listed or a link is outdated, please open an issue or PR on the [CLIF-WorkBench repository](https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-WorkBench).
 
 ## Troubleshooting
 
 ### Cache directory fills up
 
-Singularity caches Docker layers in `~/.singularity/cache` (or `~/.apptainer/cache`). On quota-limited home directories this can fail during pull.
+Apptainer caches image layers in `~/.apptainer/cache`. On quota-limited home directories this can fail during pull.
 
 ```bash
-export SINGULARITY_CACHEDIR=/scratch/$USER/.singularity/cache
-singularity pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
-singularity cache clean
+export APPTAINER_CACHEDIR=/scratch/$USER/.apptainer/cache
+apptainer pull clif-ml.sif docker://clifconsortium/clif-workbench:ml
+apptainer cache clean
 ```
 
 ### "No space left on device" during pull
@@ -353,8 +388,8 @@ singularity cache clean
 The pull writes temp files to `TMPDIR` (default `/tmp`), which may be small on login nodes.
 
 ```bash
-export SINGULARITY_TMPDIR=/scratch/$USER/tmp
-mkdir -p $SINGULARITY_TMPDIR
+export APPTAINER_TMPDIR=/scratch/$USER/tmp
+mkdir -p $APPTAINER_TMPDIR
 ```
 
 ### CUDA version mismatch
@@ -370,7 +405,7 @@ The `:ai` image has CUDA 12.8. The host driver must be **>= 525**. Check with `n
 Some clusters don't enable fakeroot by default. Ask your admin to run:
 
 ```bash
-singularity config fakeroot --add $USER
+apptainer config fakeroot --add $USER
 ```
 
 Or build on a different machine (laptop, cloud VM) and copy the `.sif` to the cluster.
@@ -384,7 +419,7 @@ Symptom: `import torch` loads a CPU-only torch from your home directory instead 
 export PYTHONNOUSERSITE=1
 
 # Or run with --no-home:
-singularity exec --no-home --bind /path/to/data:/data clif-ai.sif ...
+apptainer exec --no-home --bind /path/to/data:/data clif-ai.sif ...
 ```
 
 ### Container sees wrong Python or packages
@@ -394,10 +429,10 @@ If the cluster has a conda environment or modules loaded, they can leak into the
 ```bash
 # Option A: purge modules before running
 module purge
-singularity exec ...
+apptainer exec ...
 
 # Option B: clean environment (re-pass any SLURM vars you need)
-singularity exec --cleanenv \
+apptainer exec --cleanenv \
   --env SLURM_JOB_ID=$SLURM_JOB_ID \
   --env SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID \
   clif-ml.sif bash /project/run.sh
@@ -405,20 +440,22 @@ singularity exec --cleanenv \
 
 ### "Permission denied" on bound directories
 
-Singularity runs as your user, not root. You need read access to bound directories:
+Apptainer runs as your user, not root. You need read access to bound directories:
 
 ```bash
 ls -la /path/to/clif_data    # need at least r-x on dirs, r-- on files
 ```
 
-## Environment Variables Reference
+### `sha256sum` mismatch after copying a `.sif`
+
+Re-transfer the file; large `.sif` files occasionally corrupt over unreliable networks or USB media. Never run a `.sif` whose checksum doesn't match the source.
+
+## Environment variables reference
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `SINGULARITY_CACHEDIR` | Layer cache location during pull | `/scratch/$USER/.singularity/cache` |
-| `SINGULARITY_TMPDIR` | Temp space during build/pull | `/scratch/$USER/tmp` |
-| `SINGULARITY_BIND` | Default bind mounts (skip `--bind` flags) | `/data/clif:/data,/home/$USER/project:/project` |
-| `SINGULARITY_NO_HOME` | Prevent home dir mount (set to `1`) | `1` |
+| `APPTAINER_CACHEDIR` | Layer cache location during pull | `/scratch/$USER/.apptainer/cache` |
+| `APPTAINER_TMPDIR` | Temp space during build/pull | `/scratch/$USER/tmp` |
+| `APPTAINER_BIND` | Default bind mounts (skip `--bind` flags) | `/data/clif:/data,/home/$USER/project:/project` |
+| `APPTAINER_NO_HOME` | Prevent home dir mount (set to `1`) | `1` |
 | `PYTHONNOUSERSITE` | Prevent `~/.local` packages from loading | `1` |
-
-> For Apptainer, replace the `SINGULARITY_` prefix with `APPTAINER_` (e.g., `APPTAINER_CACHEDIR`).
