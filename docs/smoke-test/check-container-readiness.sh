@@ -67,6 +67,20 @@ if [ "$IS_MAC" = 0 ]; then
   [ "$MNS" -gt 0 ] 2>/dev/null && USERNS_OK=1
 fi
 
+# macOS-specific: Apptainer ships inside a Lima VM (template://apptainer).
+# Detect Lima itself, the state of an "apptainer" VM if one exists, and
+# Homebrew (the standard installer for Lima on macOS).
+LIMA_CMD=""; LIMA_VER=""; LIMA_APPT_STATE=""; BREW_CMD=""
+if [ "$IS_MAC" = 1 ]; then
+  if command -v limactl >/dev/null 2>&1; then
+    LIMA_CMD="limactl"
+    LIMA_VER=$(limactl --version 2>/dev/null | head -n1)
+    LIMA_APPT_STATE=$(limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null \
+      | awk '$1=="apptainer"{print $2; exit}')
+  fi
+  command -v brew >/dev/null 2>&1 && BREW_CMD="brew"
+fi
+
 echo "${B}Apptainer (primary):${N}"
 if [ -n "$APP_CMD" ]; then
   echo "  ${G}[OK]${N} $APP_CMD installed — $APP_VER"
@@ -74,7 +88,25 @@ else
   echo "  ${R}[--]${N} not installed"
   [ "$MODULE_AVAIL" = 1 ] && echo "  ${G}[OK]${N} available via: module load apptainer"
   [ "$CVMFS_AVAIL"  = 1 ] && echo "  ${G}[OK]${N} available via CVMFS: $CVMFS_BIN"
-  if [ "$IS_MAC" = 0 ]; then
+  if [ "$IS_MAC" = 1 ]; then
+    if [ -n "$LIMA_CMD" ]; then
+      echo "  ${G}[OK]${N} Lima installed — $LIMA_VER"
+      case "$LIMA_APPT_STATE" in
+        Running)
+          echo "  ${G}[OK]${N} Lima VM 'apptainer' is running — apptainer reachable via: limactl shell apptainer" ;;
+        Stopped)
+          echo "  ${Y}[..]${N} Lima VM 'apptainer' exists but is stopped — start with: limactl start apptainer" ;;
+        "")
+          echo "  ${Y}[..]${N} no Lima VM named 'apptainer' yet — create with: limactl start --name=apptainer --arch=x86_64 template://apptainer" ;;
+        *)
+          echo "  ${Y}[..]${N} Lima VM 'apptainer' state: $LIMA_APPT_STATE" ;;
+      esac
+    elif [ -n "$BREW_CMD" ]; then
+      echo "  ${Y}[..]${N} Homebrew present, Lima not installed — installable without admin: brew install lima"
+    else
+      echo "  ${R}[--]${N} Lima not installed and Homebrew not found — install Homebrew first, then 'brew install lima'"
+    fi
+  else
     if [ "$USERNS_OK" = 1 ]; then
       echo "  ${G}[OK]${N} user namespaces enabled — unprivileged install possible"
     else
@@ -164,6 +196,74 @@ elif [ "$CVMFS_AVAIL" = 1 ]; then
 
   Full guide: docs/apptainer-guide.md
 EOF
+elif [ "$IS_MAC" = 1 ] && [ -n "$LIMA_CMD" ] && [ "$LIMA_APPT_STATE" = "Running" ]; then
+  cat <<EOF
+  Apptainer is reachable via the running Lima VM 'apptainer'. From this Mac:
+
+      limactl shell apptainer
+      # inside the VM:
+      apptainer pull clif-ml.sif docker://$ML
+      apptainer pull clif-ai.sif docker://$AI      # GPU/PyTorch (optional)
+
+  Your Mac \$HOME is auto-mounted into the VM at the same path, so data on
+  the host is directly reachable from inside the container.
+
+  Full guide: docs/install/README-macos.md
+EOF
+elif [ "$IS_MAC" = 1 ] && [ -n "$LIMA_CMD" ] && [ "$LIMA_APPT_STATE" = "Stopped" ]; then
+  cat <<EOF
+  Lima VM 'apptainer' already exists — just start it (no admin needed):
+
+      limactl start apptainer
+      limactl shell apptainer
+      apptainer pull clif-ml.sif docker://$ML
+
+  Full guide: docs/install/README-macos.md
+EOF
+  EXIT=1
+elif [ "$IS_MAC" = 1 ] && [ -n "$LIMA_CMD" ]; then
+  cat <<EOF
+  Lima is installed. Create the Apptainer VM (no admin needed):
+
+      limactl start --name=apptainer --arch=x86_64 template://apptainer
+      limactl shell apptainer
+      apptainer pull clif-ml.sif docker://$ML
+
+  On Apple Silicon, --arch=x86_64 keeps you binary-compatible with the
+  clifconsortium images and HPC. If 'qemu'/'vz' errors appear, retry with
+  '--vm-type=vz'.
+
+  Full guide: docs/install/README-macos.md
+EOF
+  EXIT=1
+elif [ "$IS_MAC" = 1 ] && [ -n "$BREW_CMD" ]; then
+  cat <<EOF
+  Recommended (HPC parity): install Lima + Apptainer template via Homebrew.
+  No admin password needed beyond the one Homebrew already has:
+
+      brew install lima
+      limactl start --name=apptainer --arch=x86_64 template://apptainer
+      limactl shell apptainer
+      apptainer pull clif-ml.sif docker://$ML
+
+EOF
+  if [ "$DOCKER_OK" = 1 ]; then
+    cat <<EOF
+  Alternative (already-working Docker on this machine):
+
+      docker pull $ML
+
+EOF
+  else
+    cat <<EOF
+  Alternative (Mac-only, no HPC parity): install Docker Desktop from
+      https://www.docker.com/products/docker-desktop/
+  then: docker pull $ML
+
+EOF
+  fi
+  echo "  Full guide: docs/install/README-macos.md"
+  EXIT=1
 elif [ "$DOCKER_OK" = 1 ]; then
   cat <<EOF
   Apptainer not found, but Docker works — use it as a fallback:
@@ -175,17 +275,22 @@ elif [ "$DOCKER_OK" = 1 ]; then
 EOF
 elif [ "$IS_MAC" = 1 ]; then
   cat <<EOF
-  On macOS, install Docker Desktop (no admin required for the app install):
+  Recommended (HPC parity): install Homebrew, then Lima + Apptainer template.
+  No admin account needed — a standard macOS user can do this:
 
+      /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      brew install lima
+      limactl start --name=apptainer --arch=x86_64 template://apptainer
+      limactl shell apptainer
+      apptainer pull clif-ml.sif docker://$ML
+
+  Alternative (Mac-only, no HPC parity): install Docker Desktop from
       https://www.docker.com/products/docker-desktop/
+  then: docker pull $ML
 
-  Then:
-
-      docker pull $ML
-
-  Note: clifconsortium/* images are x86_64. On Apple Silicon, Docker Desktop
-  emulates x86_64 automatically (slower but works). For HPC-identical workflows,
-  use Lima + Apptainer — see docs/apptainer-guide.md.
+  Note: clifconsortium/* images are x86_64. On Apple Silicon, both paths
+  emulate x86_64 (Docker Desktop via Rosetta, Lima via QEMU/vz).
+  Full guide: docs/install/README-macos.md
 EOF
   EXIT=1
 elif [ "$USERNS_OK" = 1 ]; then
